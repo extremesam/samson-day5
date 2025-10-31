@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Analog Map — Handmade Digital Map</title>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=Roboto+Slab:wght@300;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root{
+      --paper:#f6efe6; /* warm paper */
+      --ink:#2b2b2b; /* ink color */
+      --sepia:rgba(94,65,28,0.06);
+    }
+    html,body{height:100%;margin:0;background:var(--paper);font-family:'Roboto Slab', serif;color:var(--ink)}
+    #map{height:100vh;width:100vw;position:relative;box-shadow:0 12px 30px rgba(0,0,0,0.15);}
+
+    /* Paper texture overlay */
+    .paper{position:absolute;inset:0;pointer-events:none;background-image:
+      linear-gradient(180deg, rgba(255,255,255,0.02) 1px, transparent 1px),
+      radial-gradient(at 10% 20%, rgba(0,0,0,0.02) 0px, transparent 2px),
+      radial-gradient(at 80% 70%, rgba(0,0,0,0.02) 0px, transparent 2px);
+    background-size:100% 28px, 6px 6px, 6px 6px;opacity:0.9;mix-blend-mode:multiply}
+
+    /* Handwritten UI */
+    .legend{position:absolute;left:18px;top:18px;background:rgba(255,250,240,0.95);border:1px solid rgba(0,0,0,0.08);padding:12px;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.06);font-family:'Caveat',cursive}
+    .legend h3{margin:0 0 6px 0;font-size:18px}
+    .legend small{display:block;color:rgba(0,0,0,0.6);font-size:11px}
+    .legend .item{display:flex;align-items:center;gap:8px;margin-top:8px}
+    .swatch{width:24px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,0.2)}
+
+    /* Compass (hand-drawn) */
+    .compass{position:absolute;right:18px;top:18px;pointer-events:none;opacity:0.95}
+
+    /* Scale with "inches" */
+    .scale{position:absolute;left:18px;bottom:18px;background:rgba(255,255,255,0.95);padding:8px;border-radius:6px;font-family:'Caveat',cursive;border:1px solid rgba(0,0,0,0.06)}
+
+    /* Print button style */
+    .controls{position:absolute;right:18px;bottom:18px;display:flex;gap:8px}
+    .controls button{font-family:'Caveat',cursive;background:#fff;border:1px solid rgba(0,0,0,0.12);padding:8px 10px;border-radius:6px;cursor:pointer}
+
+    /* Faux ink strokes for borders and markers */
+    .ink-border{stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none}
+    .hand-pin{filter:drop-shadow(0 1px 0 rgba(0,0,0,0.12))}
+
+    /* Label styling — mimic fountain-pen handwriting */
+    .hand-label{font-family:'Caveat',cursive;font-size:18px;color:var(--ink);text-shadow:0.5px 0.5px 0 rgba(0,0,0,0.03)}
+
+    /* Gentle vignette for paper edge */
+    .vignette{position:absolute;inset:0;pointer-events:none;border-radius:2px;box-shadow:inset 0 0 120px rgba(0,0,0,0.06)}
+
+    /* Stylize the Leaflet attribution to feel old school */
+    .leaflet-bottom .leaflet-control-attribution{font-size:11px;opacity:0.85}
+
+    /* Printable size hint */
+    @media print{
+      body{background:#fff}
+      .paper,.controls{display:none}
+      #map{box-shadow:none}
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="paper" aria-hidden></div>
+<div class="vignette" aria-hidden></div>
+
+<div class="legend" aria-hidden>
+  <h3>Analog Map</h3>
+  <small>Bringing back the smell of paper & ink — handmade aesthetic.</small>
+  <div class="item"><div class="swatch" style="background:#e6d8b8"></div><div>Pastoral — fields & meadows</div></div>
+  <div class="item"><div class="swatch" style="background:#bfe6c8"></div><div>Wooded areas</div></div>
+  <div class="item"><div class="swatch" style="background:#d6e6ff"></div><div>Lakes & rivers</div></div>
+</div>
+
+<div class="compass" aria-hidden>
+  <!-- Simple hand-drawn compass rose SVG -->
+  <svg width="96" height="96" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="48" fill="none" stroke="#2b2b2b" stroke-opacity="0.8" stroke-width="1.2"/>
+    <polygon points="50,6 58,50 50,44 42,50" fill="#2b2b2b" opacity="0.95"/>
+    <polygon points="50,94 58,50 50,56 42,50" fill="#2b2b2b" opacity="0.6"/>
+    <text x="50" y="20" text-anchor="middle" font-family="Caveat, cursive" font-size="9" fill="#2b2b2b">N</text>
+  </svg>
+</div>
+
+<div class="scale" aria-hidden>
+  <div class="hand-label">Scale</div>
+  <div style="font-family:'Caveat',cursive;font-size:12px;color:#3b3b3b">1 inch ≈ 50 km</div>
+</div>
+
+<div class="controls">
+  <button id="toggleInk">Toggle Ink Borders</button>
+  <button id="exportPNG">Export PNG</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Initialize leaflet map with a watercolor / paper-like tile
+  const map = L.map('map', {center:[48.8566,2.3522],zoom:5}); // starts over Paris for aesthetics
+
+  // Stamen Watercolor tiles give a painterly look (nice for analog feel)
+  const watercolor = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.jpg', {
+    attribution: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    maxZoom: 16
+  }).addTo(map);
+
+  // Subtle ink overlay: an SVG pane we can draw on
+  const svgPane = L.svg({pane: 'overlayPane'}).addTo(map);
+  const svg = d3select = document.querySelector('#map').querySelector('svg');
+
+  // Helper: draw an ink-styled border polygon around a country (example: France)
+  function drawInkBorder(coords, options={}){
+    const path = L.polygon(coords, {color:'#2b2b2b', weight:2.5, fill:false, className:'ink-border'}).addTo(map);
+    return path;
+  }
+
+  // Sample hand-drawn pins (SVG markers) — handcrafted look
+  function makeHandPin(latlng, label){
+    const pin = L.divIcon({
+      className:'hand-pin',
+      html:`<svg width="28" height="40" viewBox="0 0 28 40" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="14" cy="10" rx="9" ry="6" fill="#d73f3f" stroke="#4b2b2b" stroke-width="1.2" />
+              <path d="M14 16 C10 20, 6 28, 14 38 C22 28, 18 20, 14 16 Z" fill="#d73f3f" stroke="#4b2b2b" stroke-width="1.2"/>
+            </svg><div style="font-family:Caveat, cursive;margin-top:4px;font-size:12px;color:#2b2b2b;text-align:center">${label}</div>`,
+      iconSize:[28,40], iconAnchor:[14,40]
+    });
+    return L.marker(latlng, {icon:pin}).addTo(map);
+  }
+
+  // Add a few handcrafted markers
+  makeHandPin([48.8566,2.3522],'Paris');
+  makeHandPin([51.5074,-0.1278],'London');
+  makeHandPin([41.9028,12.4964],'Rome');
+
+  // Handwritten labels as map overlays
+  const labelLayer = L.layerGroup().addTo(map);
+  function addHandLabel(latlng, text){
+    const el = L.divIcon({className:'hand-label', html:`<div style="font-family:Caveat, cursive;font-size:16px">${text}</div>`});
+    return L.marker(latlng, {icon:el, interactive:false}).addTo(labelLayer);
+  }
+  addHandLabel([45,3.5],'Bucolic Hills');
+  addHandLabel([50,-0.5],'Old Marsh');
+
+  // Toggle border ink effect — draws simple coastlines with darker stroke
+  let inkOn = true;
+  document.getElementById('toggleInk').addEventListener('click', ()=>{
+    inkOn = !inkOn;
+    const mapEl = document.getElementById('map');
+    if(!inkOn){
+      mapEl.style.boxShadow = 'none';
+      document.querySelectorAll('.ink-border').forEach(n=>n.remove());
+    } else {
+      // re-create some ink borders (example rough rectangles for artistic vignette)
+      drawInkBorder([[51.5,-5],[51.5,9],[41,-1]]);
+    }
+  });
+
+  // Export to PNG using leaflet-image-like approach (canvas) — simple implementation
+  document.getElementById('exportPNG').addEventListener('click', ()=>{
+    window.scrollTo(0,0);
+    try{
+      // Use html2canvas if available
+      if(typeof html2canvas !== 'undefined'){
+        html2canvas(document.querySelector('#map')).then(canvas=>{
+          const link = document.createElement('a');
+          link.download = 'analog_map.png';
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        });
+      } else {
+        alert('Export requires html2canvas. Open the file online or add html2canvas to enable export.');
+      }
+    }catch(e){
+      alert('Export failed — try using your browser Print → Save as PDF/Print to file for best results.');
+    }
+  });
+
+  // Add tiny paper-ish margin lines using canvas overlay for print feel
+  const canvasPane = map.getPane('overlayPane');
+  function drawPaperMargins(){
+    const w = map.getSize().x, h = map.getSize().y;
+    // create a lightweight SVG border in the overlay pane
+    const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    s.setAttribute('width',w); s.setAttribute('height',h);
+    s.style.position='absolute'; s.style.left=0; s.style.top=0; s.style.pointerEvents='none';
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x',10); rect.setAttribute('y',10); rect.setAttribute('width',w-20); rect.setAttribute('height',h-20);
+    rect.setAttribute('fill','none'); rect.setAttribute('stroke','#2b2b2b'); rect.setAttribute('stroke-width',0.8);
+    rect.setAttribute('stroke-dasharray','4 6'); rect.setAttribute('opacity',0.12);
+    s.appendChild(rect);
+    // remove previous if any
+    const old = document.querySelector('#map svg.paper-margin'); if(old) old.remove();
+    s.classList.add('paper-margin');
+    document.querySelector('#map').appendChild(s);
+  }
+  map.on('resize moveend zoomend', drawPaperMargins);
+  drawPaperMargins();
+
+  // Small accessibility: keyboard toggle ink (I)
+  document.addEventListener('keydown', (e)=>{ if(e.key==='i' || e.key==='I') document.getElementById('toggleInk').click(); });
+
+  // Load advice: to get the full handmade look, open this page locally and print on textured paper or export to PNG at high DPI
+
+</script>
+
+<!-- Optional: load html2canvas for export if user wants to enable exporting quickly -->
+<!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script> -->
+
+</body>
+</html>
